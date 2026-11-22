@@ -1,0 +1,926 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Редактор карты потока создания ценности (VSM)</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    :root {
+      --process-bg: #e0f2fe;
+      --process-border: #0284c7;
+      --data-bg: #fef3c7;
+      --data-border: #d97706;
+      --inventory-bg: #d1fae5;
+      --inventory-border: #059669;
+      --kaizen-bg: #fee2e2;
+      --kaizen-border: #dc2626;
+    }
+    body { font-family: 'Segoe UI', system-ui, sans-serif; }
+    .canvas-container {
+      background: 
+        linear-gradient(90deg, #f1f5f9 1px, transparent 1px),
+        linear-gradient(#f1f5f9 1px, transparent 1px);
+      background-size: 20px 20px;
+      min-height: 600px;
+      position: relative;
+      overflow: auto;
+    }
+    .vsm-element {
+      position: absolute;
+      cursor: move;
+      user-select: none;
+      transition: box-shadow 0.15s;
+      z-index: 10;
+    }
+    .vsm-element:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+    .vsm-element.selected {
+      outline: 3px solid #3b82f6;
+      outline-offset: 2px;
+      z-index: 50;
+    }
+    .process-box {
+      background: var(--process-bg);
+      border: 2px solid var(--process-border);
+      border-radius: 6px;
+      min-width: 140px;
+      padding: 8px;
+    }
+    .data-box {
+      background: var(--data-bg);
+      border: 2px solid var(--data-border);
+      border-radius: 4px;
+      font-size: 12px;
+      min-width: 120px;
+      padding: 6px;
+    }
+    .inventory-box {
+      background: var(--inventory-bg);
+      border: 2px solid var(--inventory-border);
+      border-radius: 50%;
+      width: 70px;
+      height: 70px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .kaizen-burst {
+      background: var(--kaizen-bg);
+      border: 2px solid var(--kaizen-border);
+      clip-path: polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%);
+      width: 60px;
+      height: 60px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+      color: #b91c1c;
+      font-size: 16px;
+    }
+    .arrow-group {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      pointer-events: none;
+      z-index: 5;
+    }
+    .arrow-hitbox {
+      position: absolute;
+      background: transparent;
+      cursor: pointer;
+      pointer-events: auto;
+      z-index: 6;
+    }
+    .arrow-hitbox:hover { background: rgba(59, 130, 246, 0.15); }
+    .arrow-hitbox.selected { background: rgba(59, 130, 246, 0.25); }
+    .arrow-label {
+      position: absolute;
+      background: white;
+      border: 1px solid #94a3b8;
+      border-radius: 4px;
+      padding: 2px 6px;
+      font-size: 11px;
+      white-space: nowrap;
+      pointer-events: none;
+      z-index: 7;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      transform: translate(-50%, -50%);
+    }
+    .panel {
+      max-height: calc(100vh - 80px);
+      overflow-y: auto;
+    }
+    input[type="number"]::-webkit-inner-spin-button,
+    input[type="number"]::-webkit-outer-spin-button {
+      opacity: 1;
+    }
+    .toast {
+      animation: fadeInOut 3s ease-in-out forwards;
+    }
+    @keyframes fadeInOut {
+      0% { opacity: 0; transform: translateY(10px); }
+      10% { opacity: 1; transform: translateY(0); }
+      90% { opacity: 1; }
+      100% { opacity: 0; }
+    }
+  </style>
+</head>
+<body class="bg-slate-100 text-slate-800">
+  <!-- Header -->
+  <header class="bg-white border-b border-slate-200 shadow-sm sticky top-0 z-50">
+    <div class="max-w-[1800px] mx-auto px-4 py-3 flex items-center justify-between gap-4 flex-wrap">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 bg-sky-600 rounded-lg flex items-center justify-center text-white font-bold text-lg">VSM</div>
+        <div>
+          <h1 class="text-lg font-semibold leading-tight">Редактор карты потока создания ценности</h1>
+          <p class="text-xs text-slate-500">Value Stream Mapping Tool</p>
+        </div>
+      </div>
+      <div class="flex items-center gap-2 flex-wrap">
+        <button onclick="addProcess()" class="px-3 py-1.5 bg-sky-600 hover:bg-sky-700 text-white text-sm rounded-md font-medium">+ Процесс</button>
+        <button onclick="addDataBox()" class="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white text-sm rounded-md font-medium">+ Данные</button>
+        <button onclick="addInventory()" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-sm rounded-md font-medium">+ Запас</button>
+        <button onclick="addKaizen()" class="px-3 py-1.5 bg-red-500 hover:bg-red-600 text-white text-sm rounded-md font-medium">+ Кайдзен</button>
+        <button onclick="toggleConnectMode()" id="connectBtn" class="px-3 py-1.5 bg-slate-600 hover:bg-slate-700 text-white text-sm rounded-md font-medium">Связать</button>
+        <div class="w-px h-6 bg-slate-300"></div>
+        <button onclick="saveMap()" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm rounded-md">💾 Сохранить</button>
+        <button onclick="loadMap()" class="px-3 py-1.5 bg-indigo-500 hover:bg-indigo-600 text-white text-sm rounded-md">📂 Загрузить</button>
+        <button onclick="exportJSON()" class="px-3 py-1.5 bg-slate-500 hover:bg-slate-600 text-white text-sm rounded-md">⬇ JSON</button>
+        <button onclick="clearAll()" class="px-3 py-1.5 bg-rose-500 hover:bg-rose-600 text-white text-sm rounded-md">🗑 Очистить</button>
+      </div>
+    </div>
+  </header>
+
+  <div class="max-w-[1800px] mx-auto flex gap-4 p-4">
+    <!-- Left panel -->
+    <aside class="w-80 flex-shrink-0 space-y-4 panel">
+      <!-- Title -->
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
+        <label class="block text-sm font-medium text-slate-700 mb-1">Название карты</label>
+        <input id="mapTitle" type="text" value="КАРТА ПОТОКА СОЗДАНИЯ ЦЕННОСТИ — ТЕКУЩЕЕ СОСТОЯНИЕ"
+               class="w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500 focus:border-sky-500"
+               oninput="document.getElementById('canvasTitle').textContent = this.value">
+        <label class="block text-sm font-medium text-slate-700 mt-3 mb-1">Тип состояния</label>
+        <select id="mapState" class="w-full border border-slate-300 rounded-md px-3 py-2 text-sm">
+          <option value="current">Текущее состояние</option>
+          <option value="future">Будущее состояние</option>
+          <option value="ideal">Идеальное состояние</option>
+        </select>
+      </div>
+
+      <!-- Properties panel -->
+      <div id="propsPanel" class="bg-white rounded-xl shadow-sm border border-slate-200 p-4 hidden">
+        <div class="flex justify-between items-center mb-3">
+          <h3 id="propsTitle" class="font-semibold text-slate-800">Свойства</h3>
+          <button onclick="deleteSelected()" class="text-rose-600 text-sm hover:underline">Удалить</button>
+        </div>
+        <div id="propsContent" class="space-y-3 text-sm"></div>
+      </div>
+
+      <!-- Summary -->
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
+        <h3 class="font-semibold text-slate-800 mb-3">Сводка по потоку</h3>
+        <div class="space-y-2 text-sm">
+          <div class="flex justify-between"><span class="text-slate-600">Процессов:</span> <span id="sumProcesses" class="font-medium">0</span></div>
+          <div class="flex justify-between"><span class="text-slate-600">Суммарное C/T:</span> <span id="sumCT" class="font-medium">0 с</span></div>
+          <div class="flex justify-between"><span class="text-slate-600">Суммарное C/O:</span> <span id="sumCO" class="font-medium">0 мин</span></div>
+          <div class="flex justify-between"><span class="text-slate-600">Время транспортировки:</span> <span id="sumTransport" class="font-medium">0 мин</span></div>
+          <div class="flex justify-between"><span class="text-slate-600">Запасы (шт):</span> <span id="sumInv" class="font-medium">0</span></div>
+          <div class="flex justify-between"><span class="text-slate-600">Кайдзен-точки:</span> <span id="sumKaizen" class="font-medium text-red-600">0</span></div>
+        </div>
+        <button onclick="recalcSummary()" class="mt-3 w-full py-1.5 bg-slate-100 hover:bg-slate-200 rounded-md text-sm">Обновить расчёт</button>
+      </div>
+
+      <!-- Help -->
+      <div class="bg-sky-50 rounded-xl border border-sky-200 p-4 text-sm text-sky-900">
+        <h4 class="font-semibold mb-2">Как пользоваться</h4>
+        <ul class="list-disc list-inside space-y-1 text-xs">
+          <li>Добавляйте элементы кнопками сверху</li>
+          <li>Перетаскивайте элементы мышью</li>
+          <li>Клик по элементу — редактирование свойств</li>
+          <li>«Связать» → кликните по двум элементам</li>
+          <li>Клик по стрелке — редактирование транспортировки</li>
+          <li>Стрелки теперь привязываются к краям блоков</li>
+        </ul>
+      </div>
+    </aside>
+
+    <!-- Canvas -->
+    <main class="flex-1 bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col">
+      <div class="px-4 py-2 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
+        <h2 id="canvasTitle" class="font-semibold text-slate-700 text-sm truncate">КАРТА ПОТОКА СОЗДАНИЯ ЦЕННОСТИ — ТЕКУЩЕЕ СОСТОЯНИЕ</h2>
+        <span class="text-xs text-slate-500">Стрелки привязаны к краям · Клик по стрелке = редактирование</span>
+      </div>
+      <div id="canvas" class="canvas-container flex-1 relative" style="height: 700px;"></div>
+    </main>
+  </div>
+
+  <div id="toast" class="fixed bottom-6 right-6 bg-slate-800 text-white px-4 py-2 rounded-lg shadow-lg text-sm hidden z-50"></div>
+
+  <script>
+    // ========== State ==========
+    let elements = [];
+    let connections = [];   // { id, from, to, time, type, notes }
+    let selectedId = null;  // element id or 'conn_' + connId
+    let selectedType = null; // 'element' | 'connection'
+    let connectMode = false;
+    let connectFrom = null;
+    let nextId = 1;
+    let nextConnId = 1;
+    let dragState = null;
+
+    const canvas = document.getElementById('canvas');
+
+    const TRANSPORT_TYPES = [
+      { value: 'человек', label: 'Пешком / человек' },
+      { value: 'тележка', label: 'Тележка / ручная' },
+      { value: 'погрузчик', label: 'Погрузчик' },
+      { value: 'конвейер', label: 'Конвейер' },
+      { value: 'машина', label: 'Автомобиль / машина' },
+      { value: 'кран', label: 'Кран / подъёмник' },
+      { value: 'другое', label: 'Другое' }
+    ];
+
+    // ========== Helpers ==========
+    function uid(prefix = 'el') { return prefix + '_' + (nextId++); }
+    function connUid() { return 'conn_' + (nextConnId++); }
+
+    function showToast(msg) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.classList.remove('hidden');
+      t.classList.add('toast');
+      setTimeout(() => { t.classList.add('hidden'); t.classList.remove('toast'); }, 2800);
+    }
+
+    function getEl(id) { return elements.find(e => e.id === id); }
+    function getConn(id) { return connections.find(c => c.id === id); }
+
+    function getSize(el) {
+      if (el.type === 'inventory') return { w: 70, h: 70 };
+      if (el.type === 'kaizen') return { w: 60, h: 60 };
+      return { w: el.w || 150, h: el.h || 90 };
+    }
+
+    function getCenter(el) {
+      const s = getSize(el);
+      return { x: el.x + s.w / 2, y: el.y + s.h / 2 };
+    }
+
+    // Find intersection of line from center to external point with the border of the shape
+    function getEdgePoint(el, targetX, targetY) {
+      const s = getSize(el);
+      const cx = el.x + s.w / 2;
+      const cy = el.y + s.h / 2;
+      const dx = targetX - cx;
+      const dy = targetY - cy;
+
+      if (Math.abs(dx) < 0.001 && Math.abs(dy) < 0.001) {
+        return { x: cx, y: cy };
+      }
+
+      // For circular shapes (inventory, kaizen)
+      if (el.type === 'inventory' || el.type === 'kaizen') {
+        const r = s.w / 2;
+        const len = Math.sqrt(dx * dx + dy * dy);
+        return {
+          x: cx + (dx / len) * r,
+          y: cy + (dy / len) * r
+        };
+      }
+
+      // For rectangles (process, data)
+      // Find intersection with rectangle border
+      const hw = s.w / 2;
+      const hh = s.h / 2;
+
+      // Normalize direction
+      const scaleX = Math.abs(dx) > 0.001 ? hw / Math.abs(dx) : Infinity;
+      const scaleY = Math.abs(dy) > 0.001 ? hh / Math.abs(dy) : Infinity;
+      const scale = Math.min(scaleX, scaleY);
+
+      return {
+        x: cx + dx * scale,
+        y: cy + dy * scale
+      };
+    }
+
+    // ========== Create elements ==========
+    function addProcess(x = 80 + elements.length * 30, y = 140 + (elements.length % 3) * 30) {
+      const el = {
+        id: uid(),
+        type: 'process',
+        x, y, w: 160, h: 90,
+        name: 'Новый процесс',
+        operators: 1,
+        cycleTime: 30,
+        changeover: 0,
+        uptime: 100,
+        batchSize: 1,
+        notes: ''
+      };
+      elements.push(el);
+      render();
+      selectElement(el.id);
+      showToast('Процесс добавлен');
+    }
+
+    function addDataBox(x = 100 + elements.length * 20, y = 280) {
+      const el = {
+        id: uid(),
+        type: 'data',
+        x, y, w: 130, h: 100,
+        processName: 'Данные процесса',
+        ct: 25, co: 5, uptime: 95, operators: 1, availableTime: 480, notes: ''
+      };
+      elements.push(el);
+      render();
+      selectElement(el.id);
+      showToast('Блок данных добавлен');
+    }
+
+    function addInventory(x = 200 + elements.length * 25, y = 60) {
+      const el = {
+        id: uid(),
+        type: 'inventory',
+        x, y, w: 70, h: 70,
+        quantity: 50, unit: 'шт', days: 0.5, notes: ''
+      };
+      elements.push(el);
+      render();
+      selectElement(el.id);
+      showToast('Запас добавлен');
+    }
+
+    function addKaizen(x = 300 + elements.length * 20, y = 40) {
+      const el = {
+        id: uid(),
+        type: 'kaizen',
+        x, y, w: 60, h: 60,
+        number: elements.filter(e => e.type === 'kaizen').length + 1,
+        description: 'Проблема / улучшение',
+        notes: ''
+      };
+      elements.push(el);
+      render();
+      selectElement(el.id);
+      showToast('Кайдзен-вспышка добавлена');
+    }
+
+    // ========== Rendering ==========
+    function render() {
+      // Remove old visual elements
+      canvas.querySelectorAll('.vsm-element, .arrow-group, .arrow-hitbox, .arrow-label').forEach(n => n.remove());
+
+      // Draw connections first (under elements)
+      connections.forEach(c => drawConnection(c));
+
+      // Draw elements
+      elements.forEach(el => {
+        const div = document.createElement('div');
+        div.className = 'vsm-element';
+        div.dataset.id = el.id;
+        div.style.left = el.x + 'px';
+        div.style.top = el.y + 'px';
+        if (selectedType === 'element' && selectedId === el.id) div.classList.add('selected');
+
+        if (el.type === 'process') {
+          div.classList.add('process-box');
+          div.style.width = (el.w || 160) + 'px';
+          div.innerHTML = `
+            <div class="font-semibold text-sm text-sky-900 truncate" title="${el.name}">${el.name}</div>
+            <div class="text-xs text-slate-600 mt-1 space-y-0.5">
+              <div>C/T: <b>${el.cycleTime}</b> с</div>
+              <div>C/O: <b>${el.changeover}</b> мин</div>
+              <div>Опер.: <b>${el.operators}</b> · ${el.uptime}%</div>
+            </div>`;
+        } else if (el.type === 'data') {
+          div.classList.add('data-box');
+          div.style.width = (el.w || 130) + 'px';
+          div.innerHTML = `
+            <div class="font-medium text-amber-900 text-xs truncate mb-1">${el.processName}</div>
+            <div class="text-[11px] space-y-0.5 text-slate-700">
+              <div>C/T = <b>${el.ct}</b> с</div>
+              <div>C/O = <b>${el.co}</b> мин</div>
+              <div>Uptime = <b>${el.uptime}</b>%</div>
+              <div>Операторы: <b>${el.operators}</b></div>
+            </div>`;
+        } else if (el.type === 'inventory') {
+          div.classList.add('inventory-box');
+          div.innerHTML = `
+            <div>
+              <div class="text-base font-bold">${el.quantity}</div>
+              <div class="text-[10px]">${el.unit}</div>
+              ${el.days ? `<div class="text-[10px] text-slate-600">${el.days} дн</div>` : ''}
+            </div>`;
+        } else if (el.type === 'kaizen') {
+          div.classList.add('kaizen-burst');
+          div.innerHTML = `<span>${el.number}</span>`;
+          div.title = el.description;
+        }
+
+        div.addEventListener('mousedown', onMouseDown);
+        div.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (connectMode) {
+            handleConnectClick(el.id);
+          } else {
+            selectElement(el.id);
+          }
+        });
+
+        canvas.appendChild(div);
+      });
+
+      recalcSummary();
+    }
+
+    function drawConnection(c) {
+      const from = getEl(c.from);
+      const to = getEl(c.to);
+      if (!from || !to) return;
+
+      const fromCenter = getCenter(from);
+      const toCenter = getCenter(to);
+
+      // Edge attachment points
+      const p1 = getEdgePoint(from, toCenter.x, toCenter.y);
+      const p2 = getEdgePoint(to, fromCenter.x, fromCenter.y);
+
+      const dx = p2.x - p1.x;
+      const dy = p2.y - p1.y;
+      const len = Math.sqrt(dx * dx + dy * dy);
+      if (len < 5) return;
+
+      const angle = Math.atan2(dy, dx) * 180 / Math.PI;
+      const rad = angle * Math.PI / 180;
+
+      // SVG group for clean arrows
+      const svgNS = 'http://www.w3.org/2000/svg';
+      const svg = document.createElementNS(svgNS, 'svg');
+      svg.classList.add('arrow-group');
+      svg.style.overflow = 'visible';
+      svg.setAttribute('width', '100%');
+      svg.setAttribute('height', '100%');
+
+      // Line
+      const line = document.createElementNS(svgNS, 'line');
+      line.setAttribute('x1', p1.x);
+      line.setAttribute('y1', p1.y);
+      line.setAttribute('x2', p2.x - 10 * Math.cos(rad));
+      line.setAttribute('y2', p2.y - 10 * Math.sin(rad));
+      line.setAttribute('stroke', selectedType === 'connection' && selectedId === c.id ? '#2563eb' : '#334155');
+      line.setAttribute('stroke-width', selectedType === 'connection' && selectedId === c.id ? '3' : '2');
+      svg.appendChild(line);
+
+      // Arrow head
+      const head = document.createElementNS(svgNS, 'polygon');
+      const hx = p2.x;
+      const hy = p2.y;
+      const size = 9;
+      const points = [
+        `${hx},${hy}`,
+        `${hx - size * Math.cos(rad) + size * 0.4 * Math.sin(rad)},${hy - size * Math.sin(rad) - size * 0.4 * Math.cos(rad)}`,
+        `${hx - size * Math.cos(rad) - size * 0.4 * Math.sin(rad)},${hy - size * Math.sin(rad) + size * 0.4 * Math.cos(rad)}`
+      ].join(' ');
+      head.setAttribute('points', points);
+      head.setAttribute('fill', selectedType === 'connection' && selectedId === c.id ? '#2563eb' : '#334155');
+      svg.appendChild(head);
+
+      canvas.appendChild(svg);
+
+      // Invisible hitbox for clicking the arrow
+      const midX = (p1.x + p2.x) / 2;
+      const midY = (p1.y + p2.y) / 2;
+      const hit = document.createElement('div');
+      hit.className = 'arrow-hitbox' + (selectedType === 'connection' && selectedId === c.id ? ' selected' : '');
+      hit.dataset.connId = c.id;
+      // Create a thin rotated rectangle along the line
+      const hitW = len;
+      const hitH = 14;
+      hit.style.width = hitW + 'px';
+      hit.style.height = hitH + 'px';
+      hit.style.left = (p1.x) + 'px';
+      hit.style.top = (p1.y - hitH / 2) + 'px';
+      hit.style.transformOrigin = '0 50%';
+      hit.style.transform = `rotate(${angle}deg)`;
+      hit.addEventListener('click', (e) => {
+        e.stopPropagation();
+        selectConnection(c.id);
+      });
+      canvas.appendChild(hit);
+
+      // Label with transport info
+      if (c.time > 0 || c.type) {
+        const label = document.createElement('div');
+        label.className = 'arrow-label';
+        label.style.left = midX + 'px';
+        label.style.top = (midY - 14) + 'px';
+        const typeLabel = TRANSPORT_TYPES.find(t => t.value === c.type)?.label || c.type || '';
+        label.innerHTML = `<span class="font-medium">${c.time || 0} мин</span>` +
+          (typeLabel ? ` · <span class="text-slate-500">${typeLabel}</span>` : '');
+        canvas.appendChild(label);
+      }
+    }
+
+    // ========== Selection ==========
+    function selectElement(id) {
+      selectedId = id;
+      selectedType = 'element';
+      connectMode = false;
+      updateConnectBtn();
+      render();
+      showElementProps(id);
+    }
+
+    function selectConnection(id) {
+      selectedId = id;
+      selectedType = 'connection';
+      connectMode = false;
+      updateConnectBtn();
+      render();
+      showConnectionProps(id);
+    }
+
+    function showElementProps(id) {
+      const el = getEl(id);
+      const panel = document.getElementById('propsPanel');
+      const content = document.getElementById('propsContent');
+      const title = document.getElementById('propsTitle');
+      if (!el) { panel.classList.add('hidden'); return; }
+      panel.classList.remove('hidden');
+      title.textContent = 'Свойства элемента';
+
+      let html = '';
+      if (el.type === 'process') {
+        html = `
+          <div><label class="block text-xs text-slate-500 mb-0.5">Название процесса</label>
+            <input type="text" value="${el.name}" onchange="updateProp('${id}','name',this.value)" class="w-full border rounded px-2 py-1.5 text-sm"></div>
+          <div class="grid grid-cols-2 gap-2">
+            <div><label class="block text-xs text-slate-500 mb-0.5">C/T (сек)</label>
+              <input type="number" value="${el.cycleTime}" min="0" step="0.1" onchange="updateProp('${id}','cycleTime',+this.value)" class="w-full border rounded px-2 py-1.5 text-sm"></div>
+            <div><label class="block text-xs text-slate-500 mb-0.5">C/O (мин)</label>
+              <input type="number" value="${el.changeover}" min="0" step="0.1" onchange="updateProp('${id}','changeover',+this.value)" class="w-full border rounded px-2 py-1.5 text-sm"></div>
+          </div>
+          <div class="grid grid-cols-2 gap-2">
+            <div><label class="block text-xs text-slate-500 mb-0.5">Операторы</label>
+              <input type="number" value="${el.operators}" min="0" step="1" onchange="updateProp('${id}','operators',+this.value)" class="w-full border rounded px-2 py-1.5 text-sm"></div>
+            <div><label class="block text-xs text-slate-500 mb-0.5">Uptime (%)</label>
+              <input type="number" value="${el.uptime}" min="0" max="100" onchange="updateProp('${id}','uptime',+this.value)" class="w-full border rounded px-2 py-1.5 text-sm"></div>
+          </div>
+          <div><label class="block text-xs text-slate-500 mb-0.5">Размер партии</label>
+            <input type="number" value="${el.batchSize}" min="1" onchange="updateProp('${id}','batchSize',+this.value)" class="w-full border rounded px-2 py-1.5 text-sm"></div>
+          <div><label class="block text-xs text-slate-500 mb-0.5">Примечания</label>
+            <textarea onchange="updateProp('${id}','notes',this.value)" class="w-full border rounded px-2 py-1.5 text-sm" rows="2">${el.notes || ''}</textarea></div>`;
+      } else if (el.type === 'data') {
+        html = `
+          <div><label class="block text-xs text-slate-500 mb-0.5">Название</label>
+            <input type="text" value="${el.processName}" onchange="updateProp('${id}','processName',this.value)" class="w-full border rounded px-2 py-1.5 text-sm"></div>
+          <div class="grid grid-cols-2 gap-2">
+            <div><label class="block text-xs text-slate-500 mb-0.5">C/T (сек)</label>
+              <input type="number" value="${el.ct}" min="0" step="0.1" onchange="updateProp('${id}','ct',+this.value)" class="w-full border rounded px-2 py-1.5 text-sm"></div>
+            <div><label class="block text-xs text-slate-500 mb-0.5">C/O (мин)</label>
+              <input type="number" value="${el.co}" min="0" step="0.1" onchange="updateProp('${id}','co',+this.value)" class="w-full border rounded px-2 py-1.5 text-sm"></div>
+          </div>
+          <div class="grid grid-cols-2 gap-2">
+            <div><label class="block text-xs text-slate-500 mb-0.5">Uptime (%)</label>
+              <input type="number" value="${el.uptime}" min="0" max="100" onchange="updateProp('${id}','uptime',+this.value)" class="w-full border rounded px-2 py-1.5 text-sm"></div>
+            <div><label class="block text-xs text-slate-500 mb-0.5">Операторы</label>
+              <input type="number" value="${el.operators}" min="0" onchange="updateProp('${id}','operators',+this.value)" class="w-full border rounded px-2 py-1.5 text-sm"></div>
+          </div>
+          <div><label class="block text-xs text-slate-500 mb-0.5">Доступное время (мин/смена)</label>
+            <input type="number" value="${el.availableTime}" min="0" onchange="updateProp('${id}','availableTime',+this.value)" class="w-full border rounded px-2 py-1.5 text-sm"></div>`;
+      } else if (el.type === 'inventory') {
+        html = `
+          <div class="grid grid-cols-2 gap-2">
+            <div><label class="block text-xs text-slate-500 mb-0.5">Количество</label>
+              <input type="number" value="${el.quantity}" min="0" onchange="updateProp('${id}','quantity',+this.value)" class="w-full border rounded px-2 py-1.5 text-sm"></div>
+            <div><label class="block text-xs text-slate-500 mb-0.5">Ед. изм.</label>
+              <input type="text" value="${el.unit}" onchange="updateProp('${id}','unit',this.value)" class="w-full border rounded px-2 py-1.5 text-sm"></div>
+          </div>
+          <div><label class="block text-xs text-slate-500 mb-0.5">Дни запаса</label>
+            <input type="number" value="${el.days}" min="0" step="0.1" onchange="updateProp('${id}','days',+this.value)" class="w-full border rounded px-2 py-1.5 text-sm"></div>
+          <div><label class="block text-xs text-slate-500 mb-0.5">Примечания</label>
+            <textarea onchange="updateProp('${id}','notes',this.value)" class="w-full border rounded px-2 py-1.5 text-sm" rows="2">${el.notes || ''}</textarea></div>`;
+      } else if (el.type === 'kaizen') {
+        html = `
+          <div><label class="block text-xs text-slate-500 mb-0.5">Номер</label>
+            <input type="number" value="${el.number}" min="1" onchange="updateProp('${id}','number',+this.value)" class="w-full border rounded px-2 py-1.5 text-sm"></div>
+          <div><label class="block text-xs text-slate-500 mb-0.5">Описание проблемы / улучшения</label>
+            <textarea onchange="updateProp('${id}','description',this.value)" class="w-full border rounded px-2 py-1.5 text-sm" rows="3">${el.description || ''}</textarea></div>`;
+      }
+      content.innerHTML = html;
+    }
+
+    function showConnectionProps(id) {
+      const c = getConn(id);
+      const panel = document.getElementById('propsPanel');
+      const content = document.getElementById('propsContent');
+      const title = document.getElementById('propsTitle');
+      if (!c) { panel.classList.add('hidden'); return; }
+      panel.classList.remove('hidden');
+      title.textContent = 'Транспортировка';
+
+      const fromName = getEl(c.from)?.name || getEl(c.from)?.processName || c.from;
+      const toName = getEl(c.to)?.name || getEl(c.to)?.processName || c.to;
+
+      let options = TRANSPORT_TYPES.map(t =>
+        `<option value="${t.value}" ${c.type === t.value ? 'selected' : ''}>${t.label}</option>`
+      ).join('');
+
+      content.innerHTML = `
+        <div class="text-xs text-slate-500 mb-2">Связь: <b>${fromName}</b> → <b>${toName}</b></div>
+        <div>
+          <label class="block text-xs text-slate-500 mb-0.5">Время транспортировки (мин)</label>
+          <input type="number" value="${c.time || 0}" min="0" step="0.1"
+                 onchange="updateConnProp('${id}','time',+this.value)"
+                 class="w-full border rounded px-2 py-1.5 text-sm">
+        </div>
+        <div>
+          <label class="block text-xs text-slate-500 mb-0.5">Тип транспортировки</label>
+          <select onchange="updateConnProp('${id}','type',this.value)" class="w-full border rounded px-2 py-1.5 text-sm">
+            ${options}
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs text-slate-500 mb-0.5">Примечания</label>
+          <textarea onchange="updateConnProp('${id}','notes',this.value)"
+                    class="w-full border rounded px-2 py-1.5 text-sm" rows="2">${c.notes || ''}</textarea>
+        </div>
+      `;
+    }
+
+    function updateProp(id, key, value) {
+      const el = getEl(id);
+      if (el) {
+        el[key] = value;
+        render();
+        showElementProps(id);
+      }
+    }
+
+    function updateConnProp(id, key, value) {
+      const c = getConn(id);
+      if (c) {
+        c[key] = value;
+        render();
+        showConnectionProps(id);
+      }
+    }
+
+    function deleteSelected() {
+      if (selectedType === 'element' && selectedId) {
+        elements = elements.filter(e => e.id !== selectedId);
+        connections = connections.filter(c => c.from !== selectedId && c.to !== selectedId);
+        selectedId = null;
+        selectedType = null;
+        document.getElementById('propsPanel').classList.add('hidden');
+        render();
+        showToast('Элемент удалён');
+      } else if (selectedType === 'connection' && selectedId) {
+        connections = connections.filter(c => c.id !== selectedId);
+        selectedId = null;
+        selectedType = null;
+        document.getElementById('propsPanel').classList.add('hidden');
+        render();
+        showToast('Связь удалена');
+      }
+    }
+
+    // ========== Connect mode ==========
+    function toggleConnectMode() {
+      connectMode = !connectMode;
+      connectFrom = null;
+      updateConnectBtn();
+      if (connectMode) showToast('Кликните по первому, затем по второму элементу');
+    }
+
+    function updateConnectBtn() {
+      const btn = document.getElementById('connectBtn');
+      if (connectMode) {
+        btn.textContent = 'Отмена связи';
+        btn.classList.add('bg-orange-500', 'hover:bg-orange-600');
+        btn.classList.remove('bg-slate-600', 'hover:bg-slate-700');
+      } else {
+        btn.textContent = 'Связать';
+        btn.classList.remove('bg-orange-500', 'hover:bg-orange-600');
+        btn.classList.add('bg-slate-600', 'hover:bg-slate-700');
+      }
+    }
+
+    function handleConnectClick(id) {
+      if (!connectFrom) {
+        connectFrom = id;
+        showToast('Теперь кликните по второму элементу');
+      } else if (connectFrom !== id) {
+        const exists = connections.some(c =>
+          (c.from === connectFrom && c.to === id) || (c.from === id && c.to === connectFrom)
+        );
+        if (!exists) {
+          const newConn = {
+            id: connUid(),
+            from: connectFrom,
+            to: id,
+            time: 5,
+            type: 'человек',
+            notes: ''
+          };
+          connections.push(newConn);
+          showToast('Связь создана (можно сразу отредактировать)');
+          selectConnection(newConn.id);
+        } else {
+          showToast('Такая связь уже есть');
+        }
+        connectFrom = null;
+        connectMode = false;
+        updateConnectBtn();
+        render();
+      }
+    }
+
+    // ========== Drag ==========
+    function onMouseDown(e) {
+      if (connectMode) return;
+      const id = e.currentTarget.dataset.id;
+      const el = getEl(id);
+      if (!el) return;
+      dragState = {
+        id,
+        startX: e.clientX,
+        startY: e.clientY,
+        origX: el.x,
+        origY: el.y
+      };
+      selectElement(id);
+      e.preventDefault();
+    }
+
+    document.addEventListener('mousemove', (e) => {
+      if (!dragState) return;
+      const el = getEl(dragState.id);
+      if (!el) return;
+      el.x = Math.max(0, dragState.origX + (e.clientX - dragState.startX));
+      el.y = Math.max(0, dragState.origY + (e.clientY - dragState.startY));
+      render();
+    });
+
+    document.addEventListener('mouseup', () => { dragState = null; });
+
+    canvas.addEventListener('click', () => {
+      if (!connectMode) {
+        selectedId = null;
+        selectedType = null;
+        document.getElementById('propsPanel').classList.add('hidden');
+        render();
+      }
+    });
+
+    // ========== Summary ==========
+    function recalcSummary() {
+      const processes = elements.filter(e => e.type === 'process');
+      const dataBoxes = elements.filter(e => e.type === 'data');
+      const inventories = elements.filter(e => e.type === 'inventory');
+      const kaizens = elements.filter(e => e.type === 'kaizen');
+
+      let totalCT = 0;
+      processes.forEach(p => totalCT += (+p.cycleTime || 0));
+      dataBoxes.forEach(d => totalCT += (+d.ct || 0));
+
+      let totalCO = 0;
+      processes.forEach(p => totalCO += (+p.changeover || 0));
+      dataBoxes.forEach(d => totalCO += (+d.co || 0));
+
+      let totalTransport = 0;
+      connections.forEach(c => totalTransport += (+c.time || 0));
+
+      let totalInv = 0;
+      inventories.forEach(i => totalInv += (+i.quantity || 0));
+
+      document.getElementById('sumProcesses').textContent = processes.length + dataBoxes.length;
+      document.getElementById('sumCT').textContent = totalCT.toFixed(1) + ' с';
+      document.getElementById('sumCO').textContent = totalCO.toFixed(1) + ' мин';
+      document.getElementById('sumTransport').textContent = totalTransport.toFixed(1) + ' мин';
+      document.getElementById('sumInv').textContent = totalInv;
+      document.getElementById('sumKaizen').textContent = kaizens.length;
+    }
+
+    // ========== Persistence ==========
+    function saveMap() {
+      const data = {
+        title: document.getElementById('mapTitle').value,
+        state: document.getElementById('mapState').value,
+        elements,
+        connections,
+        nextId,
+        nextConnId
+      };
+      localStorage.setItem('vsm_map', JSON.stringify(data));
+      showToast('Карта сохранена в браузере');
+    }
+
+    function loadMap() {
+      const raw = localStorage.getItem('vsm_map');
+      if (!raw) { showToast('Нет сохранённой карты'); return; }
+      try {
+        const data = JSON.parse(raw);
+        document.getElementById('mapTitle').value = data.title || '';
+        document.getElementById('canvasTitle').textContent = data.title || '';
+        document.getElementById('mapState').value = data.state || 'current';
+        elements = data.elements || [];
+        // Migrate old connections without id/time/type
+        connections = (data.connections || []).map(c => ({
+          id: c.id || connUid(),
+          from: c.from,
+          to: c.to,
+          time: c.time ?? 0,
+          type: c.type || 'человек',
+          notes: c.notes || ''
+        }));
+        nextId = data.nextId || elements.length + 10;
+        nextConnId = data.nextConnId || connections.length + 5;
+        selectedId = null;
+        selectedType = null;
+        document.getElementById('propsPanel').classList.add('hidden');
+        render();
+        showToast('Карта загружена');
+      } catch (e) {
+        showToast('Ошибка загрузки');
+      }
+    }
+
+    function exportJSON() {
+      const data = {
+        title: document.getElementById('mapTitle').value,
+        state: document.getElementById('mapState').value,
+        elements,
+        connections,
+        exportedAt: new Date().toISOString()
+      };
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'vsm-map.json';
+      a.click();
+      URL.revokeObjectURL(url);
+      showToast('JSON экспортирован');
+    }
+
+    function clearAll() {
+      if (!confirm('Очистить всю карту?')) return;
+      elements = [];
+      connections = [];
+      selectedId = null;
+      selectedType = null;
+      nextId = 1;
+      nextConnId = 1;
+      document.getElementById('propsPanel').classList.add('hidden');
+      render();
+      showToast('Карта очищена');
+    }
+
+    // ========== Demo ==========
+    function loadDemo() {
+      document.getElementById('mapTitle').value = 'КАРТА ПОТОКА СОЗДАНИЯ ЦЕННОСТИ ДОЗАТОРОВ В ОТКРЫТИЕ МЕШКИ — ТЕКУЩЕЕ СОСТОЯНИЕ';
+      document.getElementById('canvasTitle').textContent = document.getElementById('mapTitle').value;
+
+      elements = [
+        { id: 'el_1', type: 'process', x: 40, y: 140, w: 150, h: 90, name: 'Сборка шкафов', operators: 2, cycleTime: 180, changeover: 15, uptime: 92, batchSize: 1, notes: '' },
+        { id: 'el_2', type: 'process', x: 280, y: 140, w: 150, h: 90, name: 'Процессы заготовки', operators: 3, cycleTime: 95, changeover: 10, uptime: 88, batchSize: 5, notes: '' },
+        { id: 'el_3', type: 'process', x: 520, y: 140, w: 160, h: 90, name: 'Процесс сварки-сборки', operators: 2, cycleTime: 210, changeover: 20, uptime: 85, batchSize: 1, notes: '' },
+        { id: 'el_4', type: 'process', x: 760, y: 140, w: 140, h: 90, name: 'Процесс покраски', operators: 1, cycleTime: 45, changeover: 30, uptime: 90, batchSize: 10, notes: '' },
+        { id: 'el_5', type: 'process', x: 980, y: 140, w: 150, h: 90, name: 'Участок финишной сборки', operators: 2, cycleTime: 120, changeover: 5, uptime: 95, batchSize: 1, notes: '' },
+
+        { id: 'el_6', type: 'data', x: 50, y: 280, w: 130, h: 100, processName: 'Сборка шкафов', ct: 180, co: 15, uptime: 92, operators: 2, availableTime: 450, notes: '' },
+        { id: 'el_7', type: 'data', x: 290, y: 280, w: 130, h: 100, processName: 'Заготовка', ct: 95, co: 10, uptime: 88, operators: 3, availableTime: 460, notes: '' },
+        { id: 'el_8', type: 'data', x: 530, y: 280, w: 130, h: 100, processName: 'Сварка-сборка', ct: 210, co: 20, uptime: 85, operators: 2, availableTime: 440, notes: '' },
+
+        { id: 'el_9', type: 'inventory', x: 200, y: 50, w: 70, h: 70, quantity: 120, unit: 'шт', days: 1.2, notes: '' },
+        { id: 'el_10', type: 'inventory', x: 440, y: 50, w: 70, h: 70, quantity: 85, unit: 'шт', days: 0.8, notes: '' },
+        { id: 'el_11', type: 'inventory', x: 680, y: 50, w: 70, h: 70, quantity: 40, unit: 'шт', days: 0.4, notes: '' },
+
+        { id: 'el_12', type: 'kaizen', x: 100, y: 30, w: 60, h: 60, number: 1, description: 'Длительная переналадка на сборке', notes: '' },
+        { id: 'el_13', type: 'kaizen', x: 340, y: 30, w: 60, h: 60, number: 2, description: 'Высокие запасы между операциями', notes: '' },
+        { id: 'el_14', type: 'kaizen', x: 580, y: 30, w: 60, h: 60, number: 3, description: 'Низкий uptime на сварке', notes: '' },
+        { id: 'el_15', type: 'kaizen', x: 820, y: 30, w: 60, h: 60, number: 4, description: 'Долгое время покраски партии', notes: '' },
+      ];
+
+      connections = [
+        { id: 'conn_1', from: 'el_1', to: 'el_2', time: 8, type: 'тележка', notes: 'Перемещение заготовок' },
+        { id: 'conn_2', from: 'el_2', to: 'el_3', time: 12, type: 'погрузчик', notes: '' },
+        { id: 'conn_3', from: 'el_3', to: 'el_4', time: 15, type: 'тележка', notes: 'В покрасочную камеру' },
+        { id: 'conn_4', from: 'el_4', to: 'el_5', time: 6, type: 'человек', notes: '' },
+      ];
+      nextId = 20;
+      nextConnId = 10;
+      render();
+    }
+
+    // Init
+    loadDemo();
+  </script>
+</body>
+</html>
